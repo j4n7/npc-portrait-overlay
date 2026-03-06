@@ -1,0 +1,70 @@
+<div class="npcib">
+  <aside class="npcib-left">
+    <div class="npcib-left-section">
+      <div class="npcib-section-title">Favorite Folders</div>
+
+      <div class="npcib-favfolders" data-role="favorites-folders">
+        {{#if favoritesFolders.length}}
+          {{#each favoritesFolders as |f|}}
+            <div class="npcib-favfolder" data-folder="{{f.path}}" title="{{f.path}}">{{f.name}}</div>
+          {{/each}}
+        {{else}}
+          <div class="npcib-muted">No favorites yet</div>
+        {{/if}}
+      </div>
+    </div>
+
+    {{!-- <div class="npcib-left-section npcib-left-section-bottom">
+      <div class="npcib-section-title">Tags (placeholder)</div>
+      <div class="npcib-tags">
+        {{#each tagsPlaceholder as |tag|}}
+          <div class="npcib-tag">{{tag}}</div>
+        {{/each}}
+      </div>
+    </div> --}}
+  </aside>
+
+  <section class="npcib-right">
+    <div class="npcib-toolbar">
+      <input class="npcib-folder" data-action="folder-input" type="text" placeholder="images/..." value="{{currentFolder}}"/>
+
+      <button class="npcib-iconbtn" data-action="fav-folder-add" title="Add current folder to favorites">☆</button>
+      <button class="npcib-iconbtn" data-action="fav-folder-remove" title="Remove current folder from favorites">✕</button>
+      <button class="npcib-iconbtn" data-action="reload" title="Reload"><i class="fas fa-arrows-rotate"></i></button>
+
+      <input class="npcib-search" data-action="search" type="text" placeholder="Search..." value="{{search}}"/>
+
+      <div class="npcib-zoom">
+        <span class="npcib-zoom-label">Zoom</span>
+        <input data-action="zoom" type="range" min="100" max="400" step="50" value="{{zoom}}"/>
+        <span class="npcib-zoom-value" data-role="zoom-value">{{zoom}}px</span>
+      </div>
+    </div>
+
+    {{#unless npcOverlayAvailable}}
+      <div class="npcib-warning">NPC Portrait Overlay API not available.</div>
+    {{/unless}}
+
+    {{#if isLoading}}
+      <div class="npcib-loading">Loading...</div>
+    {{/if}}
+
+    <div class="npcib-gallery-viewport" data-role="gallery-viewport">
+      {{#each sections as |section|}}
+        <div class="npcib-section">
+          <div class="npcib-section-title">{{section.title}}</div>
+          <div class="npcib-gallery" data-role="gallery">
+            {{#each section.images as |img|}}
+              <div class="npcib-card" data-image="{{img.path}}" title="{{img.path}}">
+                <div class="npcib-thumb">
+                  <img src="{{img.path}}" alt="thumb"/>
+                </div>
+                <div class="npcib-filename">{{img.name}}</div>
+              </div>
+            {{/each}}
+          </div>
+        </div>
+      {{/each}}
+    </div>
+  </section>
+</div>

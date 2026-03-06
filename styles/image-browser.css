@@ -1,0 +1,271 @@
+/* ==========================================================================
+   NPC Image Browser (ApplicationV2)
+   Scope: everything is prefixed with .npc-image-browser
+   ========================================================================== */
+
+/* --------------------------------------------------------------------------
+   1) Window content
+   -------------------------------------------------------------------------- */
+.npc-image-browser .window-content {
+  padding: 0;
+  overflow: hidden;
+}
+
+/* --------------------------------------------------------------------------
+   2) Root layout (2 columns)
+   -------------------------------------------------------------------------- */
+.npc-image-browser .npcib {
+  height: 100%;
+  display: grid;
+  grid-template-columns: 200px 1fr;
+}
+
+/* --------------------------------------------------------------------------
+   3) Left pane (favorites + tags)
+   -------------------------------------------------------------------------- */
+.npc-image-browser .npcib-left {
+  border-right: 1px solid rgba(255,255,255,0.10);
+  padding: 10px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.npc-image-browser .npcib-left-section {
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.npc-image-browser .npcib-left-section-bottom {
+  margin-top: auto;
+  padding-top: 10px;
+  border-top: 1px solid rgba(255,255,255,0.10);
+}
+
+.npc-image-browser .npcib-section-title {
+  font-weight: 600;
+  margin-bottom: 8px;
+  opacity: 0.9;
+}
+
+.npc-image-browser .npcib-favfolders {
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.npc-image-browser .npcib-favfolder {
+  padding: 6px 8px;
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 6px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.npc-image-browser .npcib-favfolder:hover {
+  background: rgba(255,255,255,0.06);
+}
+
+.npc-image-browser .npcib-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.npc-image-browser .npcib-tag {
+  padding: 4px 6px;
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 999px;
+  font-size: 12px;
+  opacity: 0.85;
+}
+
+.npc-image-browser .npcib-muted {
+  opacity: 0.6;
+  font-size: 12px;
+}
+
+/* --------------------------------------------------------------------------
+   4) Right pane layout (2 rows: toolbar + scroll viewport)
+   Key: This avoids "collapsing" and makes scrolling stable.
+   -------------------------------------------------------------------------- */
+.npc-image-browser .npcib-right {
+  display: grid;
+  grid-template-rows: auto 1fr;
+  height: 100%;
+  overflow: hidden;
+}
+
+/* --------------------------------------------------------------------------
+   5) Toolbar (single row but wraps if space is tight)
+   -------------------------------------------------------------------------- */
+.npc-image-browser .npcib-toolbar {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 8px;
+  padding: 10px;
+  border-bottom: 1px solid rgba(255,255,255,0.10);
+  align-items: center;
+}
+
+.npc-image-browser .npcib-folder {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.npc-image-browser .npcib-search {
+  flex: 0 1 220px;
+  min-width: 140px;
+}
+
+.npc-image-browser .npcib-iconbtn {
+  min-width: 32px;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  line-height: 1;
+}
+
+.npc-image-browser .npcib-iconbtn i {
+  font-size: 14px;
+}
+
+.npc-image-browser .npcib-zoom {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+}
+
+.npc-image-browser .npcib-zoom-label {
+  opacity: 0.8;
+}
+
+.npc-image-browser .npcib-zoom-value {
+  width: 56px;
+  text-align: right;
+  opacity: 0.9;
+}
+
+/* Optional info rows (if you show them) */
+.npc-image-browser .npcib-warning {
+  padding: 8px 10px;
+  color: #ffd37a;
+  border-bottom: 1px solid rgba(255,255,255,0.10);
+}
+
+.npc-image-browser .npcib-loading {
+  padding: 8px 10px;
+  opacity: 0.8;
+}
+
+/* --------------------------------------------------------------------------
+   6) Gallery viewport (this is the scroll container)
+   IMPORTANT: Requires template wrapper:
+     <div class="npcib-gallery-viewport">
+       <div class="npcib-gallery" ...>...</div>
+     </div>
+   -------------------------------------------------------------------------- */
+.npc-image-browser .npcib-gallery-viewport {
+  overflow: auto;
+  min-height: 0;
+  padding: 12px;
+  height: 100%;
+}
+
+/* --------------------------------------------------------------------------
+   7) Gallery grid
+   -------------------------------------------------------------------------- */
+.npc-image-browser .npcib-gallery {
+  --cell-size: 160px;
+
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(var(--cell-size), var(--cell-size)));
+  gap: 10px;
+  align-content: start;
+}
+
+/* --------------------------------------------------------------------------
+   8) Cards (stable size: square thumb + fixed filename row)
+   -------------------------------------------------------------------------- */
+.npc-image-browser .npcib-card {
+  display: grid;
+  grid-template-rows: var(--cell-size) 28px;
+
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 10px;
+  overflow: hidden;
+  cursor: pointer;
+  user-select: none;
+  background: rgba(0,0,0,0.15);
+}
+
+.npc-image-browser .npcib-card.is-selected {
+  outline: 2px solid rgba(120, 200, 255, 0.9);
+  outline-offset: -2px;
+}
+
+.npc-image-browser .npcib-thumb {
+  width: 100%;
+  height: var(--cell-size);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+}
+
+.npc-image-browser .npcib-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.npc-image-browser .npcib-filename {
+  height: 28px;
+  line-height: 28px;
+  padding: 0 8px;
+
+  font-size: 12px;
+  opacity: 0.85;
+
+  border-top: 1px solid rgba(255,255,255,0.10);
+
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* -------------------------------------------------------------------------- */
+/* 9) Sections                                                                */
+/* -------------------------------------------------------------------------- */
+
+.npc-image-browser .npcib-section {
+  margin-top: 24px;           /* separation from previous category */
+}
+
+.npc-image-browser .npcib-section:first-child {
+  margin-top: 0;              /* no extra space at very top */
+}
+
+.npc-image-browser .npcib-section-title {
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: 0.2px;
+  margin: 10px 12px 12px 12px; /* spacing around the title */
+  opacity: 0.95;
+}
+
+.npc-image-browser .npcib-section-title::after {
+  content: "";
+  display: block;
+  height: 1px;
+  margin-top: 8px;
+  background: rgba(255,255,255,0.10);
+}
