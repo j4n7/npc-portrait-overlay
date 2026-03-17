@@ -228,18 +228,49 @@
 }
 
 .npc-image-browser .npcib-filename {
+  position: relative;
   height: 28px;
-  line-height: 28px;
-  padding: 0 8px;
+  padding: 0 34px 0 8px;
 
   font-size: 12px;
   opacity: 0.85;
+  line-height: 28px;
 
   border-top: 1px solid rgba(255,255,255,0.10);
+}
+
+.npc-image-browser .npcib-filename-text {
+  display: block;
+  width: 100%;
 
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.npc-image-browser .npcib-copy-btn {
+  position: absolute;
+  top: 50%;
+  right: 6px;
+  transform: translateY(-50%);
+
+  width: 18px;
+  height: 18px;
+  padding: 0;
+
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+
+  border: none;
+  background: transparent;
+  color: rgba(255,255,255,0.65);
+  cursor: pointer;
+}
+
+.npc-image-browser .npcib-copy-btn:hover {
+  color: rgba(255,255,255,0.95);
+  background: transparent;
 }
 
 /* -------------------------------------------------------------------------- */

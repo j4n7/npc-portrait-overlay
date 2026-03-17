@@ -81,6 +81,49 @@ function removeFromArray(items, value) {
   return items.filter(x => x !== value);
 }
 
+function getCopyableImagePath(path) {
+  const normalized = String(path ?? "").trim().replace(/\\/g, "/");
+  if (!normalized) return "";
+
+  const dataMarkerMatch = normalized.match(/\/Data\/(.*)$/i);
+  if (dataMarkerMatch?.[1]) return dataMarkerMatch[1];
+
+  const lower = normalized.toLowerCase();
+  const dataPrefix = "data/";
+  if (lower.startsWith(dataPrefix)) {
+    return normalized.slice(dataPrefix.length);
+  }
+
+  return normalized.replace(/^\/+/, "");
+}
+
+async function copyTextToClipboard(text) {
+  const value = String(text ?? "");
+  if (!value) return false;
+
+  if (navigator.clipboard?.writeText && window.isSecureContext) {
+    await navigator.clipboard.writeText(value);
+    return true;
+  }
+
+  const textArea = document.createElement("textarea");
+  textArea.value = value;
+  textArea.setAttribute("readonly", "");
+  textArea.style.position = "fixed";
+  textArea.style.top = "-1000px";
+  textArea.style.left = "-1000px";
+  document.body.appendChild(textArea);
+  textArea.select();
+
+  let success = false;
+  try {
+    success = document.execCommand("copy");
+  } finally {
+    document.body.removeChild(textArea);
+  }
+
+  return success;
+}
 
 /* ========================================================================== */
 /*  BLOCK 03. IMAGE GROUPING HELPER                                           */
@@ -383,6 +426,19 @@ class NpcImageBrowserApp extends HandlebarsApplicationMixin(ApplicationV2) {
       galleryViewport.dataset.bound = "1";
 
       galleryViewport.addEventListener("click", async (ev) => {
+        const copyBtn = ev.target.closest("[data-action='copy-path']");
+        if (copyBtn) {
+          ev.preventDefault();
+          ev.stopPropagation();
+
+          const card = copyBtn.closest("[data-image]");
+          const imagePath = card?.getAttribute("data-image");
+          if (!imagePath) return;
+
+          await this._copyImagePath(imagePath);
+          return;
+        }
+
         const card = ev.target.closest("[data-image]");
         if (!card) return;
 
@@ -481,6 +537,29 @@ class NpcImageBrowserApp extends HandlebarsApplicationMixin(ApplicationV2) {
       const path = el.getAttribute("data-image");
       el.classList.toggle("is-selected", Boolean(selected && path === selected));
     });
+  }
+
+  async _copyImagePath(imagePath) {
+    const copyPath = getCopyableImagePath(imagePath);
+
+    if (!copyPath) {
+      ui.notifications.warn("Could not determine the image path to copy.");
+      return;
+    }
+
+    try {
+      const ok = await copyTextToClipboard(copyPath);
+
+      if (!ok) {
+        ui.notifications.warn("Could not copy the image path.");
+        return;
+      }
+
+      ui.notifications.info(`Copied: ${copyPath}`);
+    } catch (error) {
+      console.error(error);
+      ui.notifications.error("Failed to copy the image path.");
+    }
   }
 
   /* ------------------------------------------------------------------------ */

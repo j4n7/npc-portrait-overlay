@@ -59,7 +59,18 @@
                 <div class="npcib-thumb">
                   <img src="{{img.path}}" alt="thumb"/>
                 </div>
-                <div class="npcib-filename">{{img.name}}</div>
+                <div class="npcib-filename">
+                  <span class="npcib-filename-text">{{img.name}}</span>
+                  <button
+                    type="button"
+                    class="npcib-copy-btn"
+                    data-action="copy-path"
+                    title="Copy image path"
+                    aria-label="Copy image path"
+                  >
+                    <i class="fas fa-copy"></i>
+                  </button>
+                </div>
               </div>
             {{/each}}
           </div>

@@ -5,6 +5,16 @@ const STATE_SETTING_KEY = "overlayState";
 const LAST_FOLDER_SETTING_KEY = "lastUsedFolder";
 const DEFAULT_PICKER_FOLDER = "images/red-sun/common/kepta";
 
+const SOCKET_NAME = `module.${MODULE_ID}`;
+const SOCKET_ACTIONS = {
+  TOGGLE_CHARACTER_PORTRAIT: "toggleCharacterPortrait"
+};
+const QUERY_TOGGLE_CHARACTER_PORTRAIT = `${MODULE_ID}.toggleCharacterPortrait`;
+
+const SCENE_CONTROL_NAME = "npc-portrait-overlay__scene-control";
+const SCENE_CONTROL_TITLE = "NPC Portraits Overlay";
+const SCENE_CONTROL_ICON = "fa-solid fa-theater-masks";
+
 const MAX_COLUMNS = 4;
 const GAP_PX = 24;
 const VIEWPORT_PADDING_PX = 48;
@@ -15,6 +25,8 @@ const MAX_IMAGE_PX = 700;
 
 const BACKDROP_ALPHA = 0.55;
 const OVERLAY_Z_INDEX = 999999;
+const TARGET_HOVER_PREVIEW_HEIGHT_PX = 900;
+const MAX_HOVER_PREVIEW_SCALE = 2;
 
 const IMAGE_EXTENSIONS = [".png", ".jpg", ".jpeg", ".webp", ".gif", ".svg", ".avif"];
 
@@ -82,6 +94,108 @@ function getParentFolder(filePath) {
   return parent || DEFAULT_PICKER_FOLDER;
 }
 
+function getUserCharacter(user = game.user) {
+  return user?.character ?? null;
+}
+
+function getActorPortraitPath(actor) {
+  if (!actor) return null;
+
+  const candidates = [
+    actor.img,
+    actor.prototypeToken?.texture?.src,
+    actor.token?.texture?.src
+  ];
+
+  for (const candidate of candidates) {
+    if (typeof candidate === "string" && candidate.trim().length > 0) {
+      return candidate.trim();
+    }
+  }
+
+  return null;
+}
+
+function getUserCharacterPortraitPath(user = game.user) {
+  const actor = getUserCharacter(user);
+  if (!actor) return null;
+  return getActorPortraitPath(actor);
+}
+
+function canCurrentGmHandleSocket() {
+  return game.user?.isGM === true;
+}
+
+function emitSocketMessage(payload) {
+  log("emitSocketMessage", payload);
+  game.socket.emit(SOCKET_NAME, payload);
+}
+
+// -----------------------------------------------------------------------------
+// SCENE CONTROLS INTEGRATION
+// -----------------------------------------------------------------------------
+
+function registerNpcPortraitSceneControl(buttonMetaLookup) {
+  if (!game.user.isGM) return;
+  if (buttonMetaLookup[SCENE_CONTROL_NAME]) return;
+
+  const maxOrder = Math.max(
+    0,
+    ...Object.values(buttonMetaLookup).map(button => button?.order ?? 0)
+  );
+
+  buttonMetaLookup[SCENE_CONTROL_NAME] = {
+    name: SCENE_CONTROL_NAME,
+    title: SCENE_CONTROL_TITLE,
+    icon: SCENE_CONTROL_ICON,
+    tools: [
+      {
+        name: SCENE_CONTROL_NAME,
+        title: SCENE_CONTROL_TITLE,
+        icon: SCENE_CONTROL_ICON,
+        onClick: () => {
+          ui.notifications.info("NPC Portraits Overlay fallback click triggered.");
+          openNpcImageBrowser();
+        },
+        button: true
+      }
+    ],
+    visible: true,
+    activeTool: SCENE_CONTROL_NAME,
+    order: maxOrder + 1
+  };
+}
+
+function handleNpcPortraitSceneControlClick(originalFn, event, ...rest) {
+  const controlElement = event?.target?.closest?.("[data-control]");
+  const controlName = controlElement?.dataset?.control;
+
+  if (controlName === SCENE_CONTROL_NAME) {
+    event.preventDefault();
+    event.stopPropagation();
+    openNpcImageBrowser();
+    return;
+  }
+
+  return originalFn(event, ...rest);
+}
+
+function registerNpcPortraitSceneControlWrapper() {
+  if (!globalThis.libWrapper) {
+    console.warn(`${MODULE_ID} | libWrapper is required for the scene control button integration.`);
+    return;
+  }
+
+  libWrapper.register(
+    MODULE_ID,
+    "ui.controls.options.actions.control",
+    function (originalFn, event, ...rest) {
+      return handleNpcPortraitSceneControlClick(originalFn, event, ...rest);
+    },
+    "MIXED"
+  );
+}
+
 // -----------------------------------------------------------------------------
 // PIXI OVERLAY
 // -----------------------------------------------------------------------------
@@ -90,6 +204,9 @@ const PixiOverlay = {
   root: null,
   backdrop: null,
   grid: null,
+  hoverPreviewLayer: null,
+  hoverPreviewSprite: null,
+  hoverPreviewImagePath: null,
   sprites: new Map(),
   textures: new Map(),
   hitAreas: new Map(),
@@ -147,6 +264,65 @@ function clearHoveredImage() {
   setCanvasCursor("");
 }
 
+function clearHoverPreview() {
+  PixiOverlay.hoverPreviewImagePath = null;
+
+  try {
+    PixiOverlay.hoverPreviewSprite?.destroy({ children: true, texture: false, baseTexture: false });
+  } catch (_) {}
+
+  PixiOverlay.hoverPreviewSprite = null;
+}
+
+function getSpriteForImagePath(imagePath) {
+  return PixiOverlay.sprites.get(imagePath) ?? null;
+}
+
+function getHoverPreviewScale(baseSprite) {
+  const baseHeight = Number(baseSprite?.height) || 0;
+  if (baseHeight <= 0) return 1.0;
+
+  const rawScale = TARGET_HOVER_PREVIEW_HEIGHT_PX / baseHeight;
+  return Math.max(1.0, Math.min(MAX_HOVER_PREVIEW_SCALE, rawScale));
+}
+
+function showHoverPreview(imagePath) {
+  if (!PixiOverlay.grid || !PixiOverlay.hoverPreviewLayer) return;
+
+  if (!imagePath) {
+    clearHoverPreview();
+    return;
+  }
+
+  if (PixiOverlay.hoverPreviewImagePath === imagePath && PixiOverlay.hoverPreviewSprite) return;
+
+  clearHoverPreview();
+
+  const baseSprite = getSpriteForImagePath(imagePath);
+  if (!baseSprite?.texture) return;
+
+  const previewSprite = new PIXI.Sprite(baseSprite.texture);
+  previewSprite.name = `${MODULE_ID}-hover-preview`;
+  previewSprite.anchor.set(baseSprite.anchor.x, baseSprite.anchor.y);
+
+  const globalPos = baseSprite.getGlobalPosition();
+  const localPos = PixiOverlay.hoverPreviewLayer.toLocal(globalPos);
+  const hoverScale = getHoverPreviewScale(baseSprite);
+
+  previewSprite.position.set(localPos.x, localPos.y);
+  previewSprite.scale.set(
+    baseSprite.scale.x * hoverScale,
+    baseSprite.scale.y * hoverScale
+  );
+  previewSprite.eventMode = "none";
+  previewSprite.interactive = false;
+  previewSprite.interactiveChildren = false;
+
+  PixiOverlay.hoverPreviewLayer.addChild(previewSprite);
+  PixiOverlay.hoverPreviewSprite = previewSprite;
+  PixiOverlay.hoverPreviewImagePath = imagePath;
+}
+
 function getCanvasClientPoint(event) {
   if (!event) return null;
 
@@ -190,18 +366,26 @@ function getHitImagePathAtEvent(event) {
 }
 
 function onCanvasPointerMove(event) {
-  if (!game.user.isGM) {
-    clearHoveredImage();
-    return;
+  const imagePath = getHitImagePathAtEvent(event);
+
+  PixiOverlay.hoveredImagePath = imagePath;
+
+  if (game.user.isGM) {
+    setCanvasCursor(imagePath ? "pointer" : "");
+  } else {
+    setCanvasCursor("");
   }
 
-  const imagePath = getHitImagePathAtEvent(event);
-  PixiOverlay.hoveredImagePath = imagePath;
-  setCanvasCursor(imagePath ? "pointer" : "");
+  if (imagePath) {
+    showHoverPreview(imagePath);
+  } else {
+    clearHoverPreview();
+  }
 }
 
 function onCanvasPointerLeave() {
   clearHoveredImage();
+  clearHoverPreview();
 }
 
 async function onCanvasContextMenu(event) {
@@ -241,6 +425,7 @@ function detachCanvasDomListeners() {
 
   PixiOverlay.domListenersAttached = false;
   clearHoveredImage();
+  clearHoverPreview();
 }
 
 function destroyPixiOverlay({ clearTextures = false } = {}) {
@@ -266,6 +451,7 @@ function destroyPixiOverlay({ clearTextures = false } = {}) {
   }
 
   PixiOverlay.hitAreas.clear();
+  clearHoverPreview();
 
   if (clearTextures) {
     try {
@@ -284,6 +470,10 @@ function destroyPixiOverlay({ clearTextures = false } = {}) {
   } catch (_) {}
 
   try {
+    PixiOverlay.hoverPreviewLayer?.destroy({ children: true });
+  } catch (_) {}
+
+  try {
     PixiOverlay.grid?.destroy({ children: true });
   } catch (_) {}
 
@@ -294,6 +484,7 @@ function destroyPixiOverlay({ clearTextures = false } = {}) {
   PixiOverlay.root = null;
   PixiOverlay.backdrop = null;
   PixiOverlay.grid = null;
+  PixiOverlay.hoverPreviewLayer = null;
 }
 
 function ensurePixiOverlay() {
@@ -320,14 +511,21 @@ function ensurePixiOverlay() {
   grid.eventMode = "none";
   grid.interactiveChildren = false;
 
+  const hoverPreviewLayer = new PIXI.Container();
+  hoverPreviewLayer.name = `${MODULE_ID}-hover-preview-layer`;
+  hoverPreviewLayer.eventMode = "none";
+  hoverPreviewLayer.interactiveChildren = false;
+
   root.addChild(backdrop);
   root.addChild(grid);
+  root.addChild(hoverPreviewLayer);
 
   canvas.interface.addChild(root);
 
   PixiOverlay.root = root;
   PixiOverlay.backdrop = backdrop;
   PixiOverlay.grid = grid;
+  PixiOverlay.hoverPreviewLayer = hoverPreviewLayer;
 
   forceOverlayOnTop();
   attachCanvasDomListeners();
@@ -393,6 +591,7 @@ function layoutPixiOverlay() {
   forceOverlayOnTop();
   drawBackdrop();
   PixiOverlay.hitAreas.clear();
+  clearHoverPreview();
 
   const sprites = PixiOverlay.grid.children.filter(child => child instanceof PIXI.Sprite);
   const count = sprites.length;
@@ -486,6 +685,7 @@ async function renderPixiFromPaths(imagePaths) {
   const normalized = normalizeImagePaths(imagePaths);
   OverlayRuntime.pendingImagePaths = normalized;
 
+  clearHoverPreview();
   PixiOverlay.grid.removeChildren();
 
   for (const existingPath of Array.from(PixiOverlay.sprites.keys())) {
@@ -658,6 +858,30 @@ async function applyImagesState(imagePaths) {
   return normalizedPaths;
 }
 
+async function addImageToAllAsGm(imagePath) {
+  const currentState = getState();
+  const nextPaths = [...currentState.imagePaths, imagePath];
+  return await applyImagesState(nextPaths);
+}
+
+async function removeImageToAllAsGm(imagePath) {
+  const currentState = getState();
+  const nextPaths = currentState.imagePaths.filter(path => path !== imagePath);
+  return await applyImagesState(nextPaths);
+}
+
+async function toggleImageToAllAsGm(imagePath) {
+  const currentState = getState();
+  const currentPaths = normalizeImagePaths(currentState.imagePaths);
+  const alreadyShown = currentPaths.includes(imagePath);
+
+  if (alreadyShown) {
+    return await removeImageToAllAsGm(imagePath);
+  }
+
+  return await addImageToAllAsGm(imagePath);
+}
+
 async function setImagesToAll(imagePaths) {
   if (!game.user.isGM) {
     ui.notifications.warn("Only the GM can control portraits for everyone.");
@@ -673,17 +897,25 @@ async function addImageToAll(imagePath) {
     return [];
   }
 
-  const currentState = getState();
-  const nextPaths = [...currentState.imagePaths, imagePath];
-  return await applyImagesState(nextPaths);
+  return await addImageToAllAsGm(imagePath);
 }
 
 async function removeImageToAll(imagePath) {
-  if (!game.user.isGM) return [];
+  if (!game.user.isGM) {
+    ui.notifications.warn("Only the GM can control portraits for everyone.");
+    return [];
+  }
 
-  const currentState = getState();
-  const nextPaths = currentState.imagePaths.filter(path => path !== imagePath);
-  return await applyImagesState(nextPaths);
+  return await removeImageToAllAsGm(imagePath);
+}
+
+async function toggleImageToAll(imagePath) {
+  if (!game.user.isGM) {
+    ui.notifications.warn("Only the GM can control portraits for everyone.");
+    return [];
+  }
+
+  return await toggleImageToAllAsGm(imagePath);
 }
 
 async function clearAll() {
@@ -770,6 +1002,94 @@ async function restoreFromState() {
   return imagePaths;
 }
 
+async function handleSocketMessage(payload) {
+  log("handleSocketMessage received", {
+    isGM: game.user?.isGM,
+    userId: game.user?.id,
+    payload
+  });
+
+  if (!canCurrentGmHandleSocket()) return;
+
+  const action = payload?.action;
+  if (!action) return;
+
+  switch (action) {
+    case SOCKET_ACTIONS.TOGGLE_CHARACTER_PORTRAIT: {
+      const userId = payload?.userId;
+      if (!userId) return;
+
+      const user = game.users.get(userId);
+      if (!user) {
+        log("Socket user not found", userId);
+        return;
+      }
+
+      const imagePath = getUserCharacterPortraitPath(user);
+      if (!imagePath) {
+        log("Socket portrait path not found for user", userId);
+        return;
+      }
+
+      log("Socket toggling portrait", { userId, imagePath });
+      await toggleImageToAllAsGm(imagePath);
+      break;
+    }
+
+    default:
+      log("Unknown socket action", action);
+      break;
+  }
+}
+
+async function toggleMyCharacterInOverlay() {
+  const actor = getUserCharacter(game.user);
+  log("toggleMyCharacterInOverlay", {
+    userId: game.user?.id,
+    userName: game.user?.name,
+    isGM: game.user?.isGM,
+    actorId: actor?.id,
+    actorName: actor?.name
+  });
+
+  if (!actor) {
+    ui.notifications.warn("You do not have an assigned character.");
+    return null;
+  }
+
+  const imagePath = getActorPortraitPath(actor);
+  log("toggleMyCharacterInOverlay portrait", imagePath);
+
+  if (!imagePath) {
+    ui.notifications.warn("Your character does not have a valid portrait image.");
+    return null;
+  }
+
+  if (game.user.isGM) {
+    await toggleImageToAllAsGm(imagePath);
+    return imagePath;
+  }
+
+  const activeGm = game.users.activeGM;
+  if (!activeGm) {
+    ui.notifications.warn("No active GM is connected.");
+    return null;
+  }
+
+  const response = await activeGm.query(QUERY_TOGGLE_CHARACTER_PORTRAIT, {
+    userId: game.user.id
+  }, { timeout: 10000 });
+
+  log("toggleMyCharacterInOverlay query response", response);
+
+  if (!response?.ok) {
+    ui.notifications.warn("The GM could not toggle your portrait.");
+    return null;
+  }
+
+  return response.imagePath;
+}
+
 // Keep the overlay stable when the canvas changes
 function onCanvasReady() {
   forceOverlayOnTop();
@@ -821,19 +1141,50 @@ Hooks.on("canvasReady", onCanvasReady);
 Hooks.on("canvasTearDown", onCanvasTearDown);
 Hooks.on("canvasPan", onCanvasPan);
 
+Hooks.on("getSceneControlButtons", (buttonMetaLookup) => {
+  registerNpcPortraitSceneControl(buttonMetaLookup);
+});
+
 Hooks.once("ready", async () => {
+  registerNpcPortraitSceneControlWrapper();
+
+  CONFIG.queries[QUERY_TOGGLE_CHARACTER_PORTRAIT] = async (queryData) => {
+    if (!game.user.isGM) return { ok: false, reason: "not-gm" };
+
+    const userId = queryData?.userId;
+    if (!userId) return { ok: false, reason: "missing-user-id" };
+
+    const user = game.users.get(userId);
+    if (!user) return { ok: false, reason: "user-not-found" };
+
+    const imagePath = getUserCharacterPortraitPath(user);
+    if (!imagePath) return { ok: false, reason: "missing-portrait" };
+
+    await toggleImageToAllAsGm(imagePath);
+
+    return {
+      ok: true,
+      imagePath
+    };
+  };
+
+  game.socket.on(SOCKET_NAME, handleSocketMessage);
+
   globalThis.NpcPortraitOverlay = {
     resolveFolderImages,
     showImages,
     setImagesToAll,
     addImageToAll,
     removeImageToAll,
+    toggleImageToAll,
     clearAll,
     showFolderToAll,
     pickAndAddImage,
     restoreFromState,
     forceRemoveLocalOverlay,
-    openImageBrowser: openNpcImageBrowser
+    openImageBrowser: openNpcImageBrowser,
+    getUserCharacterPortraitPath,
+    toggleMyCharacterInOverlay
   };
 
   log("API ready", globalThis.NpcPortraitOverlay);
