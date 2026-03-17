@@ -25,7 +25,7 @@ const MAX_IMAGE_PX = 700;
 
 const BACKDROP_ALPHA = 0.55;
 const OVERLAY_Z_INDEX = 999999;
-const TARGET_HOVER_PREVIEW_HEIGHT_PX = 900;
+const TARGET_HOVER_PREVIEW_HEIGHT_PX = 1000;
 const MAX_HOVER_PREVIEW_SCALE = 2;
 
 const IMAGE_EXTENSIONS = [".png", ".jpg", ".jpeg", ".webp", ".gif", ".svg", ".avif"];

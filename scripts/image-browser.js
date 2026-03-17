@@ -18,6 +18,7 @@ const MODULE_ID = "npc-portrait-overlay";
 
 const SETTINGS = {
   FAVORITE_FOLDERS: "imageBrowser.favoriteFolders",
+  FAVORITE_IMAGES: "imageBrowser.favoriteImages",
   LAST_FOLDER: "imageBrowser.lastFolder",
   ZOOM: "imageBrowser.zoom"
 };
@@ -28,6 +29,7 @@ const DEFAULTS = {
 };
 
 const IMAGE_EXTENSIONS = [".png", ".jpg", ".jpeg", ".webp", ".gif", ".svg", ".avif"];
+const FAVORITES_VIRTUAL_PATH = "__npcib_favorites__";
 
 const { ApplicationV2, HandlebarsApplicationMixin } = foundry.applications.api;
 
@@ -81,6 +83,24 @@ function removeFromArray(items, value) {
   return items.filter(x => x !== value);
 }
 
+function getFavoriteImagePaths() {
+  const favs = getSetting(SETTINGS.FAVORITE_IMAGES, []);
+  return Array.isArray(favs) ? uniqueArray(favs) : [];
+}
+
+async function setFavoriteImagePaths(imagePaths) {
+  const clean = uniqueArray((Array.isArray(imagePaths) ? imagePaths : []).filter(p => typeof p === "string" && p.trim()));
+  await setSetting(SETTINGS.FAVORITE_IMAGES, clean);
+}
+
+function getFavoriteVirtualFolderView() {
+  return {
+    path: FAVORITES_VIRTUAL_PATH,
+    name: "favorites",
+    isVirtual: true
+  };
+}
+
 function getCopyableImagePath(path) {
   const normalized = String(path ?? "").trim().replace(/\\/g, "/");
   if (!normalized) return "";
@@ -129,8 +149,9 @@ async function copyTextToClipboard(text) {
 /*  BLOCK 03. IMAGE GROUPING HELPER                                           */
 /* ========================================================================== */
 
-function buildImageSections(imagePaths) {
+function buildImageSections(imagePaths, { includeFavoritesSection = false } = {}) {
   const groups = new Map();
+  const favoriteSet = new Set(getFavoriteImagePaths());
 
   const getFileStem = (path) => {
     const file = path.split("/").pop() ?? "";
@@ -138,7 +159,6 @@ function buildImageSections(imagePaths) {
   };
 
   const toTitle = (s) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
-
   const isPureNumber = (s) => /^\d+$/.test(s);
 
   const parseTrailingNumber = (stem) => {
@@ -166,11 +186,7 @@ function buildImageSections(imagePaths) {
     const species = (parts[0] ?? "other").toLowerCase();
 
     if (!groups.has(species)) {
-      groups.set(species, {
-        named: [],
-        typed: new Map(),
-        plain: []
-      });
+      groups.set(species, { named: [], typed: new Map(), plain: [] });
     }
 
     const group = groups.get(species);
@@ -206,7 +222,26 @@ function buildImageSections(imagePaths) {
     return a.stem.localeCompare(b.stem);
   };
 
+  const toImageView = ({ path, stem }) => ({
+    path,
+    name: stem,
+    isFavorite: favoriteSet.has(path)
+  });
+
   const sections = [];
+
+  if (includeFavoritesSection) {
+    const favorites = imagePaths
+      .filter(path => favoriteSet.has(path))
+      .map(path => ({ path, stem: getFileStem(path) }))
+      .sort((a, b) => a.stem.localeCompare(b.stem))
+      .map(toImageView);
+
+    if (favorites.length) {
+      sections.push({ title: "Favorites", images: favorites, isFavoritesSection: true });
+    }
+  }
+
   const speciesKeys = [...groups.keys()].sort();
 
   for (const species of speciesKeys) {
@@ -220,19 +255,16 @@ function buildImageSections(imagePaths) {
     for (const type of typeKeys) {
       const arr = group.typed.get(type);
       arr.sort(sortByNumThenStem);
-      for (const item of arr) typedAll.push(item);
+      typedAll.push(...arr);
     }
 
     const images = [
-      ...group.named.map(({ path, stem }) => ({ path, name: stem })),
-      ...typedAll.map(({ path, stem }) => ({ path, name: stem })),
-      ...group.plain.map(({ path, stem }) => ({ path, name: stem }))
+      ...group.named.map(toImageView),
+      ...typedAll.map(toImageView),
+      ...group.plain.map(toImageView)
     ];
 
-    sections.push({
-      title: toTitle(species),
-      images
-    });
+    sections.push({ title: toTitle(species), images });
   }
 
   return sections;
@@ -283,6 +315,7 @@ class NpcImageBrowserApp extends HandlebarsApplicationMixin(ApplicationV2) {
       selectedImagePath: null,
       images: [],
       favoritesFolders: getSetting(SETTINGS.FAVORITE_FOLDERS, []),
+      favoriteImages: getFavoriteImagePaths(),
       isLoading: false
     };
   }
@@ -298,6 +331,7 @@ class NpcImageBrowserApp extends HandlebarsApplicationMixin(ApplicationV2) {
 
   async _prepareContext(_options) {
     const favoritesFolders = Array.isArray(this._model.favoritesFolders) ? this._model.favoritesFolders : [];
+    const favoriteImages = Array.isArray(this._model.favoriteImages) ? this._model.favoriteImages : [];
     let imagePaths = Array.isArray(this._model.images) ? this._model.images : [];
 
     const toBaseName = (p) => p.split("/").filter(Boolean).pop() ?? p;
@@ -307,17 +341,18 @@ class NpcImageBrowserApp extends HandlebarsApplicationMixin(ApplicationV2) {
       name: toBaseName(p)
     }));
 
+    if (favoriteImages.length) {
+      favoritesFoldersView.unshift(getFavoriteVirtualFolderView());
+    }
+
     const search = String(this._model.search ?? "").trim().toLowerCase();
     if (search) {
       imagePaths = imagePaths.filter((p) => toBaseName(p).toLowerCase().includes(search));
     }
 
-    const sections = buildImageSections(imagePaths);
-
-    const imagesView = imagePaths.map((p) => ({
-      path: p,
-      name: toBaseName(p)
-    }));
+    const sections = buildImageSections(imagePaths, {
+      includeFavoritesSection: this._model.currentFolder !== FAVORITES_VIRTUAL_PATH
+    });
 
     return {
       currentFolder: this._model.currentFolder,
@@ -326,7 +361,6 @@ class NpcImageBrowserApp extends HandlebarsApplicationMixin(ApplicationV2) {
       isLoading: this._model.isLoading,
       favoritesFolders: favoritesFoldersView,
       selectedImagePath: this._model.selectedImagePath,
-      images: imagesView,
       sections,
       npcOverlayAvailable: ensureNpcOverlayApi(),
       tagsPlaceholder: ["human", "goblin", "triton"]
@@ -436,6 +470,19 @@ class NpcImageBrowserApp extends HandlebarsApplicationMixin(ApplicationV2) {
           if (!imagePath) return;
 
           await this._copyImagePath(imagePath);
+          return;
+        }
+
+        const favoriteBtn = ev.target.closest("[data-action='toggle-favorite']");
+        if (favoriteBtn) {
+          ev.preventDefault();
+          ev.stopPropagation();
+
+          const card = favoriteBtn.closest("[data-image]");
+          const imagePath = card?.getAttribute("data-image");
+          if (!imagePath) return;
+
+          await this._toggleFavoriteImage(imagePath);
           return;
         }
 
@@ -562,6 +609,29 @@ class NpcImageBrowserApp extends HandlebarsApplicationMixin(ApplicationV2) {
     }
   }
 
+  async _toggleFavoriteImage(imagePath) {
+    const currentFavorites = getFavoriteImagePaths();
+    const nextFavorites = currentFavorites.includes(imagePath)
+      ? removeFromArray(currentFavorites, imagePath)
+      : uniqueArray([...currentFavorites, imagePath]);
+
+    await setFavoriteImagePaths(nextFavorites);
+    this._model.favoriteImages = nextFavorites;
+
+    if (this._model.currentFolder === FAVORITES_VIRTUAL_PATH) {
+      if (!nextFavorites.length) {
+        const fallbackFolder = normalizeFolderPath(getSetting(SETTINGS.LAST_FOLDER, DEFAULTS.lastFolder));
+        await this._loadFolder(fallbackFolder);
+        return;
+      }
+
+      await this._loadFolder(FAVORITES_VIRTUAL_PATH);
+      return;
+    }
+
+    this.render({ force: true });
+  }
+
   /* ------------------------------------------------------------------------ */
   /*  04E. DATA / MODEL ACTIONS                                               */
   /* ------------------------------------------------------------------------ */
@@ -573,13 +643,19 @@ class NpcImageBrowserApp extends HandlebarsApplicationMixin(ApplicationV2) {
     this.render({ force: true });
 
     try {
-      const files = await browseFolder(nextFolder);
+      let files;
+
+      if (nextFolder === FAVORITES_VIRTUAL_PATH) {
+        files = getFavoriteImagePaths().filter(isImageFile).sort((a, b) => a.localeCompare(b));
+      } else {
+        files = await browseFolder(nextFolder);
+        await setSetting(SETTINGS.LAST_FOLDER, nextFolder);
+      }
 
       this._model.currentFolder = nextFolder;
       this._model.images = files;
+      this._model.favoriteImages = getFavoriteImagePaths();
       this._model.selectedImagePath = files[0] ?? null;
-
-      await setSetting(SETTINGS.LAST_FOLDER, nextFolder);
     } catch (error) {
       console.error(error);
       ui.notifications.error(`Could not browse folder: ${nextFolder}`);
@@ -672,6 +748,14 @@ export function openNpcImageBrowser() {
 Hooks.once("init", () => {
   game.settings.register(MODULE_ID, SETTINGS.FAVORITE_FOLDERS, {
     name: "Favorite Folders",
+    scope: "client",
+    config: false,
+    type: Array,
+    default: []
+  });
+
+  game.settings.register(MODULE_ID, SETTINGS.FAVORITE_IMAGES, {
+    name: "Favorite Images",
     scope: "client",
     config: false,
     type: Array,

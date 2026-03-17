@@ -230,7 +230,7 @@
 .npc-image-browser .npcib-filename {
   position: relative;
   height: 28px;
-  padding: 0 34px 0 8px;
+  padding: 0 70px 0 8px;
 
   font-size: 12px;
   opacity: 0.85;
@@ -248,17 +248,28 @@
   text-overflow: ellipsis;
 }
 
-.npc-image-browser .npcib-copy-btn {
+/* CONTENEDOR DE ACCIONES */
+.npc-image-browser .npcib-card-actions {
   position: absolute;
   top: 50%;
-  right: 6px;
+  right: 8px;
   transform: translateY(-50%);
 
-  width: 18px;
-  height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+
+  gap: 0px;
+}
+
+/* BOTONES */
+.npc-image-browser .npcib-copy-btn,
+.npc-image-browser .npcib-favorite-btn {
+  width: 20px;
+  height: 20px;
   padding: 0;
 
-  display: inline-flex;
+  display: flex;
   align-items: center;
   justify-content: center;
 
@@ -268,9 +279,17 @@
   cursor: pointer;
 }
 
-.npc-image-browser .npcib-copy-btn:hover {
+/* HOVER */
+.npc-image-browser .npcib-copy-btn:hover,
+.npc-image-browser .npcib-favorite-btn:hover {
   color: rgba(255,255,255,0.95);
-  background: transparent;
+}
+
+/* ICONOS */
+.npc-image-browser .npcib-copy-btn i,
+.npc-image-browser .npcib-favorite-btn i {
+  font-size: 12px;
+  pointer-events: none;
 }
 
 /* -------------------------------------------------------------------------- */

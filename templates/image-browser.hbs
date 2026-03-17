@@ -61,15 +61,26 @@
                 </div>
                 <div class="npcib-filename">
                   <span class="npcib-filename-text">{{img.name}}</span>
-                  <button
-                    type="button"
-                    class="npcib-copy-btn"
-                    data-action="copy-path"
-                    title="Copy image path"
-                    aria-label="Copy image path"
-                  >
-                    <i class="fas fa-copy"></i>
-                  </button>
+                  <div class="npcib-card-actions">
+                    <button
+                      type="button"
+                      class="npcib-copy-btn"
+                      data-action="copy-path"
+                      title="Copy image path"
+                      aria-label="Copy image path"
+                    >
+                      <i class="fas fa-copy"></i>
+                    </button>
+                    <button
+                      type="button"
+                      class="npcib-favorite-btn"
+                      data-action="toggle-favorite"
+                      title="Toggle favorite"
+                      aria-label="Toggle favorite"
+                    >
+                      <i class="{{#if img.isFavorite}}fa-solid{{else}}fa-regular{{/if}} fa-star"></i>
+                    </button>
+                  </div>
                 </div>
               </div>
             {{/each}}
