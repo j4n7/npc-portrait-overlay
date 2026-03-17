@@ -145,6 +145,10 @@ async function copyTextToClipboard(text) {
   return success;
 }
 
+function getDisplayFolderPath(folderPath) {
+  return folderPath === FAVORITES_VIRTUAL_PATH ? "favorites" : folderPath;
+}
+
 /* ========================================================================== */
 /*  BLOCK 03. IMAGE GROUPING HELPER                                           */
 /* ========================================================================== */
@@ -355,7 +359,7 @@ class NpcImageBrowserApp extends HandlebarsApplicationMixin(ApplicationV2) {
     });
 
     return {
-      currentFolder: this._model.currentFolder,
+      currentFolder: getDisplayFolderPath(this._model.currentFolder),
       zoom: this._model.zoom,
       search: this._model.search,
       isLoading: this._model.isLoading,
@@ -363,7 +367,10 @@ class NpcImageBrowserApp extends HandlebarsApplicationMixin(ApplicationV2) {
       selectedImagePath: this._model.selectedImagePath,
       sections,
       npcOverlayAvailable: ensureNpcOverlayApi(),
-      tagsPlaceholder: ["human", "goblin", "triton"]
+      tagsPlaceholder: ["human", "goblin", "triton"],
+      isCurrentFolderFavorite:
+        this._model.currentFolder !== FAVORITES_VIRTUAL_PATH &&
+        favoritesFolders.includes(this._model.currentFolder)
     };
   }
 
@@ -375,9 +382,9 @@ class NpcImageBrowserApp extends HandlebarsApplicationMixin(ApplicationV2) {
     const zoomValueEl = root.querySelector("[data-role='zoom-value']");
     const folderInput = root.querySelector("[data-action='folder-input']");
     const searchInput = root.querySelector("[data-action='search']");
+    const browseFolderBtn = root.querySelector("[data-action='browse-folder']");
     const reloadBtn = root.querySelector("[data-action='reload']");
-    const addFavFolderBtn = root.querySelector("[data-action='fav-folder-add']");
-    const removeFavFolderBtn = root.querySelector("[data-action='fav-folder-remove']");
+    const favFolderToggleBtn = root.querySelector("[data-action='fav-folder-toggle']");
 
     const favoritesList = root.querySelector("[data-role='favorites-folders']");
     const galleryViewport = root.querySelector("[data-role='gallery-viewport']");
@@ -409,7 +416,7 @@ class NpcImageBrowserApp extends HandlebarsApplicationMixin(ApplicationV2) {
         requestAnimationFrame(() => this._applyGalleryViewport());
       });
     }
-    if (folderInput) folderInput.value = this._model.currentFolder;
+    if (folderInput) folderInput.value = getDisplayFolderPath(this._model.currentFolder);
 
     if (searchInput && !searchInput.dataset.bound) {
       searchInput.dataset.bound = "1";
@@ -421,25 +428,54 @@ class NpcImageBrowserApp extends HandlebarsApplicationMixin(ApplicationV2) {
     }
     if (searchInput) searchInput.value = this._model.search;
 
+    if (browseFolderBtn && !browseFolderBtn.dataset.bound) {
+      browseFolderBtn.dataset.bound = "1";
+      browseFolderBtn.addEventListener("click", async () => {
+        const current = this._model.currentFolder === FAVORITES_VIRTUAL_PATH
+          ? normalizeFolderPath(getSetting(SETTINGS.LAST_FOLDER, DEFAULTS.lastFolder))
+          : this._model.currentFolder;
+
+        const picker = new FilePicker({
+          type: "folder",
+          source: "data",
+          current,
+          callback: async (path) => {
+            if (!path) return;
+            await this._loadFolder(path);
+            requestAnimationFrame(() => this._applyGalleryViewport());
+          }
+        });
+
+        picker.render(true);
+      });
+    }
+
     if (reloadBtn && !reloadBtn.dataset.bound) {
       reloadBtn.dataset.bound = "1";
       reloadBtn.addEventListener("click", async () => {
-        await this._loadFolder(this._model.currentFolder);
+        const targetFolder = this._model.currentFolder === FAVORITES_VIRTUAL_PATH
+          ? FAVORITES_VIRTUAL_PATH
+          : this._model.currentFolder;
+
+        await this._loadFolder(targetFolder);
         requestAnimationFrame(() => this._applyGalleryViewport());
       });
     }
 
-    if (addFavFolderBtn && !addFavFolderBtn.dataset.bound) {
-      addFavFolderBtn.dataset.bound = "1";
-      addFavFolderBtn.addEventListener("click", async () => {
-        await this._addCurrentFolderToFavorites();
-      });
-    }
+    if (favFolderToggleBtn && !favFolderToggleBtn.dataset.bound) {
+      favFolderToggleBtn.dataset.bound = "1";
+      favFolderToggleBtn.addEventListener("click", async () => {
+        if (this._model.currentFolder === FAVORITES_VIRTUAL_PATH) return;
 
-    if (removeFavFolderBtn && !removeFavFolderBtn.dataset.bound) {
-      removeFavFolderBtn.dataset.bound = "1";
-      removeFavFolderBtn.addEventListener("click", async () => {
-        await this._removeCurrentFolderFromFavorites();
+        const current = this._model.currentFolder;
+        const favorites = Array.isArray(this._model.favoritesFolders) ? this._model.favoritesFolders : [];
+        const isFavorite = favorites.includes(current);
+
+        if (isFavorite) {
+          await this._removeCurrentFolderFromFavorites();
+        } else {
+          await this._addCurrentFolderToFavorites();
+        }
       });
     }
 
@@ -669,6 +705,8 @@ class NpcImageBrowserApp extends HandlebarsApplicationMixin(ApplicationV2) {
 
   async _addCurrentFolderToFavorites() {
     const current = this._model.currentFolder;
+    if (!current || current === FAVORITES_VIRTUAL_PATH) return;
+
     const favorites = Array.isArray(this._model.favoritesFolders) ? this._model.favoritesFolders : [];
     const next = uniqueArray([...favorites, current]).sort((a, b) => a.localeCompare(b));
 
@@ -679,6 +717,8 @@ class NpcImageBrowserApp extends HandlebarsApplicationMixin(ApplicationV2) {
 
   async _removeCurrentFolderFromFavorites() {
     const current = this._model.currentFolder;
+    if (!current || current === FAVORITES_VIRTUAL_PATH) return;
+
     const favorites = Array.isArray(this._model.favoritesFolders) ? this._model.favoritesFolders : [];
     const next = removeFromArray(favorites, current);
 
