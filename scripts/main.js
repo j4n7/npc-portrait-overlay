@@ -219,7 +219,8 @@ const PixiOverlay = {
 const OverlayRuntime = {
   pendingImagePaths: [],
   restoreTimer: null,
-  restoreAttempts: 0
+  restoreAttempts: 0,
+  renderVersion: 0
 };
 
 function isCanvasReady() {
@@ -659,29 +660,94 @@ function layoutPixiOverlay() {
   }
 }
 
-async function loadTextureForPath(imagePath) {
-  if (PixiOverlay.textures.has(imagePath)) return PixiOverlay.textures.get(imagePath);
+function isUsableTexture(texture) {
+  if (!texture) return false;
+  if (texture.destroyed || texture.baseTexture?.destroyed) return false;
 
-  let texture;
-  try {
-    if (typeof loadTexture === "function") {
-      texture = await loadTexture(imagePath);
-    } else {
-      texture = PIXI.Texture.from(imagePath);
-    }
-  } catch (error) {
-    console.error(error);
-    return null;
+  const width = Number(texture.width) || 0;
+  const height = Number(texture.height) || 0;
+
+  if (width <= 1 || height <= 1) return false;
+  if (texture.valid === false) return false;
+  if (texture.baseTexture && texture.baseTexture.valid === false) return false;
+
+  return true;
+}
+
+function getCacheBustedImagePath(imagePath) {
+  const separator = imagePath.includes("?") ? "&" : "?";
+  return `${imagePath}${separator}${MODULE_ID}-reload=${Date.now()}`;
+}
+
+function forgetTexture(imagePath, { destroy = false } = {}) {
+  const texture = PixiOverlay.textures.get(imagePath);
+  PixiOverlay.textures.delete(imagePath);
+
+  if (destroy && texture) {
+    try {
+      texture.destroy(true);
+    } catch (_) {}
   }
+}
 
-  if (!texture) return null;
-  PixiOverlay.textures.set(imagePath, texture);
+async function loadTextureSource(sourcePath) {
+  if (typeof loadTexture === "function") return await loadTexture(sourcePath);
+
+  const texture = PIXI.Texture.from(sourcePath);
+  if (isUsableTexture(texture)) return texture;
+
+  await new Promise((resolve) => {
+    const baseTexture = texture?.baseTexture;
+    if (!baseTexture?.once) return resolve();
+
+    const finish = () => resolve();
+    baseTexture.once("loaded", finish);
+    baseTexture.once("error", finish);
+    setTimeout(finish, 2500);
+  });
+
   return texture;
 }
 
-async function renderPixiFromPaths(imagePaths) {
+async function loadTextureForPath(imagePath, { forceReload = false } = {}) {
+  const cachedTexture = PixiOverlay.textures.get(imagePath);
+
+  if (!forceReload && isUsableTexture(cachedTexture)) {
+    return cachedTexture;
+  }
+
+  if (cachedTexture) {
+    console.warn(`${MODULE_ID} | Discarding unusable cached texture`, { imagePath, cachedTexture });
+    forgetTexture(imagePath, { destroy: false });
+  }
+
+  const sourcesToTry = forceReload
+    ? [getCacheBustedImagePath(imagePath), imagePath]
+    : [imagePath, getCacheBustedImagePath(imagePath)];
+
+  for (const sourcePath of sourcesToTry) {
+    try {
+      const texture = await loadTextureSource(sourcePath);
+
+      if (isUsableTexture(texture)) {
+        PixiOverlay.textures.set(imagePath, texture);
+        return texture;
+      }
+
+      console.warn(`${MODULE_ID} | Texture loaded but is not usable`, { imagePath, sourcePath, texture });
+    } catch (error) {
+      console.warn(`${MODULE_ID} | Texture load failed`, { imagePath, sourcePath, error });
+    }
+  }
+
+  forgetTexture(imagePath, { destroy: false });
+  return null;
+}
+
+async function renderPixiFromPaths(imagePaths, { forceReloadTextures = false } = {}) {
   if (!ensurePixiOverlay()) return;
 
+  const renderVersion = ++OverlayRuntime.renderVersion;
   const normalized = normalizeImagePaths(imagePaths);
   OverlayRuntime.pendingImagePaths = normalized;
 
@@ -689,22 +755,42 @@ async function renderPixiFromPaths(imagePaths) {
   PixiOverlay.grid.removeChildren();
 
   for (const existingPath of Array.from(PixiOverlay.sprites.keys())) {
-    if (!normalized.includes(existingPath)) {
+    if (!normalized.includes(existingPath) || forceReloadTextures) {
       const sprite = PixiOverlay.sprites.get(existingPath);
       try {
         sprite?.destroy({ children: true, texture: false, baseTexture: false });
       } catch (_) {}
       PixiOverlay.sprites.delete(existingPath);
       PixiOverlay.hitAreas.delete(existingPath);
+
+      if (forceReloadTextures) {
+        forgetTexture(existingPath, { destroy: false });
+      }
     }
   }
 
+  const spritesToAdd = [];
+
   for (const imagePath of normalized) {
+    if (renderVersion !== OverlayRuntime.renderVersion) return;
+
     let sprite = PixiOverlay.sprites.get(imagePath);
 
-    if (!sprite) {
-      const texture = await loadTextureForPath(imagePath);
-      if (!texture) continue;
+    if (!sprite || !isUsableTexture(sprite.texture) || forceReloadTextures) {
+      if (sprite) {
+        try {
+          sprite.destroy({ children: true, texture: false, baseTexture: false });
+        } catch (_) {}
+        PixiOverlay.sprites.delete(imagePath);
+      }
+
+      const texture = await loadTextureForPath(imagePath, { forceReload: forceReloadTextures });
+      if (renderVersion !== OverlayRuntime.renderVersion) return;
+
+      if (!texture || !isUsableTexture(texture)) {
+        console.warn(`${MODULE_ID} | Skipping portrait because its texture could not be loaded`, { imagePath });
+        continue;
+      }
 
       sprite = new PIXI.Sprite(texture);
       sprite.name = `${MODULE_ID}-sprite`;
@@ -722,6 +808,13 @@ async function renderPixiFromPaths(imagePaths) {
       sprite.interactiveChildren = false;
     }
 
+    spritesToAdd.push(sprite);
+  }
+
+  if (renderVersion !== OverlayRuntime.renderVersion) return;
+
+  PixiOverlay.grid.removeChildren();
+  for (const sprite of spritesToAdd) {
     PixiOverlay.grid.addChild(sprite);
   }
 
@@ -812,6 +905,47 @@ function hideOverlay() {
 
 function forceRemoveLocalOverlay() {
   destroyPixiOverlay({ clearTextures: false });
+}
+
+async function repairOverlay() {
+  const state = getState();
+  const imagePaths = normalizeImagePaths(state.imagePaths);
+
+  destroyPixiOverlay({ clearTextures: true });
+
+  if (imagePaths.length) {
+    await renderPixiFromPaths(imagePaths, { forceReloadTextures: true });
+  }
+
+  return imagePaths;
+}
+
+function getOverlayDebugInfo() {
+  return {
+    canvasReady: isCanvasReady(),
+    pendingImagePaths: OverlayRuntime.pendingImagePaths,
+    stateImagePaths: normalizeImagePaths(getState().imagePaths),
+    sprites: Array.from(PixiOverlay.sprites.entries()).map(([imagePath, sprite]) => ({
+      imagePath,
+      spriteWidth: sprite?.width ?? null,
+      spriteHeight: sprite?.height ?? null,
+      textureWidth: sprite?.texture?.width ?? null,
+      textureHeight: sprite?.texture?.height ?? null,
+      textureValid: sprite?.texture?.valid ?? null,
+      baseTextureValid: sprite?.texture?.baseTexture?.valid ?? null,
+      textureDestroyed: sprite?.texture?.destroyed ?? null,
+      baseTextureDestroyed: sprite?.texture?.baseTexture?.destroyed ?? null
+    })),
+    textures: Array.from(PixiOverlay.textures.entries()).map(([imagePath, texture]) => ({
+      imagePath,
+      textureWidth: texture?.width ?? null,
+      textureHeight: texture?.height ?? null,
+      textureValid: texture?.valid ?? null,
+      baseTextureValid: texture?.baseTexture?.valid ?? null,
+      textureDestroyed: texture?.destroyed ?? null,
+      baseTextureDestroyed: texture?.baseTexture?.destroyed ?? null
+    }))
+  };
 }
 
 // -----------------------------------------------------------------------------
@@ -1099,7 +1233,7 @@ function onCanvasReady() {
 
 function onCanvasTearDown() {
   cancelScheduledRestore();
-  destroyPixiOverlay({ clearTextures: false });
+  destroyPixiOverlay({ clearTextures: true });
 }
 
 function onCanvasPan() {
@@ -1182,6 +1316,8 @@ Hooks.once("ready", async () => {
     pickAndAddImage,
     restoreFromState,
     forceRemoveLocalOverlay,
+    repairOverlay,
+    getOverlayDebugInfo,
     openImageBrowser: openNpcImageBrowser,
     getUserCharacterPortraitPath,
     toggleMyCharacterInOverlay
